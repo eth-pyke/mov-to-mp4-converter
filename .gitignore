@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Converted media / test clips (don't commit output or samples)
+*.mp4
+*.mov
+*.m4v
