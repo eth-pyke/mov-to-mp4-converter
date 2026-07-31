@@ -1,0 +1,9 @@
+# No Python package dependencies -- the converter uses only the standard library.
+#
+# It does require the ffmpeg + ffprobe binaries on your PATH. For full
+# HDR->SDR tone-mapping support, install a build that includes zimg/zscale:
+#
+#   brew install homebrew-ffmpeg/ffmpeg/ffmpeg --with-zimg
+#
+# The plain `brew install ffmpeg` also works but ships without the zscale
+# tone-mapping filter; the tool falls back to a lower-quality HDR conversion.
