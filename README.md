@@ -60,6 +60,25 @@ python convert.py clip.mov --dry-run
 | `--overwrite` | Overwrite existing outputs. |
 | `--dry-run` | Print the plan and ffmpeg command only. |
 
+## Web UI (local)
+
+Prefer drag-and-drop? Launch the local browser app:
+
+```sh
+python serve.py
+```
+
+It opens `http://127.0.0.1:8000` in your browser. Drop `.mov` files onto the
+page, pick an output folder, and hit **Convert**. Each clip shows what it
+detected (e.g. `hevc 10-bit HDR → tone-map HDR→SDR`), a live progress bar, and
+where it saved — plus a **Download** button.
+
+It's a **local** app: files are uploaded to the localhost server (they never
+leave your machine), converted with the same core and real ffmpeg as the CLI,
+and written to your chosen folder. No third-party Python packages — just the
+standard library. `python serve.py --port N` / `--no-open` adjust the port and
+browser auto-open.
+
 ## How it decides
 
 ```
@@ -75,15 +94,19 @@ otherwise
 ## Project layout
 
 ```
-convert.py            # entry point: python convert.py ...
-converter/
+convert.py            # CLI entry point: python convert.py ...
+serve.py              # Web UI entry point: python serve.py
+converter/            # reusable core (no UI knowledge)
   probe.py            # ffprobe -> MediaInfo (codec/HDR/VFR/rotation/audio)
   decisions.py        # MediaInfo + Options -> ConversionPlan (codec-agnostic)
   convert.py          # ConversionPlan -> ffmpeg command (+ progress)
   ffmpeg.py           # locate binaries, run subprocess, parse progress
-  cli.py              # argparse + batching (the only user-facing module)
+  cli.py              # argparse + batching
+webui/                # local browser app
+  server.py           # stdlib HTTP server; imports the converter core
+  static/             # index.html, styles.css, app.js
 ```
 
-The `probe` → `decisions` → `convert` core has no CLI knowledge, so a future
-GUI can import and drive it directly. `--prores` already flows through the same
-`OutputFormat` abstraction.
+Both front-ends (CLI and web) drive the same `probe` → `decisions` → `convert`
+core — it has no UI knowledge. `--prores` flows through the same `OutputFormat`
+abstraction.
