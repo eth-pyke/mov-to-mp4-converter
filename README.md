@@ -2,7 +2,7 @@
 
 Convert iPhone `.mov` files to edit-ready `.mp4` while preserving quality — built
 so the footage looks **correct**, not washed-out, when imported into DaVinci
-Resolve and other editors.
+Resolve and other editors. Also converts `.heic`/`.heif` photos to `.jpg`.
 
 ## Why this exists
 
@@ -20,8 +20,8 @@ It's a *color* problem, not a codec-quality problem. This tool:
 ## Requirements
 
 - **Python 3** (standard library only — no `pip install` needed).
-- **ffmpeg + ffprobe** on your PATH. For full HDR tone-mapping, install a build
-  that includes the `zscale` (zimg) filter:
+- **ffmpeg + ffprobe** on your PATH, for `.mov` conversion. For full HDR
+  tone-mapping, install a build that includes the `zscale` (zimg) filter:
 
   ```sh
   brew install homebrew-ffmpeg/ffmpeg/ffmpeg --with-zimg
@@ -29,6 +29,8 @@ It's a *color* problem, not a codec-quality problem. This tool:
 
   A plain `brew install ffmpeg` also works but ships without `zscale`; the tool
   then falls back to a lower-quality HDR conversion (and tells you so).
+- **macOS's `sips`** (built in, nothing to install), for `.heic`/`.heif` ->
+  `.jpg` conversion. HEIC support is therefore macOS-only.
 
 ## Usage
 
@@ -44,6 +46,10 @@ python convert.py ./iphone-clips/ -o ./converted/
 
 # See the plan + exact ffmpeg command without running anything
 python convert.py clip.mov --dry-run
+
+# HEIC -> JPG (single file, or a folder mixing .mov and .heic)
+python convert.py photo.heic
+python convert.py ./iphone-clips/ -o ./converted/
 ```
 
 ### Options
@@ -59,6 +65,7 @@ python convert.py clip.mov --dry-run
 | `--prores` | *(experimental)* Output ProRes 422 HQ `.mov` — the edit-ideal format. |
 | `--overwrite` | Overwrite existing outputs. |
 | `--dry-run` | Print the plan and ffmpeg command only. |
+| `--jpg-quality N` | JPEG quality 0-100 for HEIC->JPG conversion (default `90`). |
 
 ## Web UI (local)
 
@@ -68,10 +75,11 @@ Prefer drag-and-drop? Launch the local browser app:
 python serve.py
 ```
 
-It opens `http://127.0.0.1:8000` in your browser. Drop `.mov` files onto the
-page, pick an output folder, and hit **Convert**. Each clip shows what it
-detected (e.g. `hevc 10-bit HDR → tone-map HDR→SDR`), a live progress bar, and
-where it saved — plus a **Download** button.
+It opens `http://127.0.0.1:8000` in your browser. Drop `.mov` or `.heic` files
+onto the page, pick an output folder, and hit **Convert**. Each file shows what
+it detected (e.g. `hevc 10-bit HDR → tone-map HDR→SDR`, or `HEIC image →
+convert to JPG`), a live progress bar, and where it saved — plus a
+**Download** button.
 
 It's a **local** app: files are uploaded to the localhost server (they never
 leave your machine), converted with the same core and real ffmpeg as the CLI,
@@ -82,13 +90,15 @@ browser auto-open.
 ## How it decides
 
 ```
-source is H.264 8-bit SDR, no flags forcing a re-encode
+.mov source is H.264 8-bit SDR, no flags forcing a re-encode
         └── remux (stream copy, lossless, instant)
-otherwise
+.mov otherwise
         └── re-encode to H.264 MP4
               ├── HDR source (default)  → tone-map HDR → SDR Rec.709
               ├── HDR source + --hdr     → preserve 10-bit HDR
               └── --cfr                  → normalize VFR → CFR
+.heic / .heif source
+        └── convert to JPG via sips (--jpg-quality controls quality)
 ```
 
 ## Project layout
@@ -101,12 +111,14 @@ converter/            # reusable core (no UI knowledge)
   decisions.py        # MediaInfo + Options -> ConversionPlan (codec-agnostic)
   convert.py          # ConversionPlan -> ffmpeg command (+ progress)
   ffmpeg.py           # locate binaries, run subprocess, parse progress
-  cli.py              # argparse + batching
+  heic.py             # HEIC/HEIF -> JPG via macOS `sips`
+  cli.py              # argparse + batching, dispatches .mov vs .heic
 webui/                # local browser app
   server.py           # stdlib HTTP server; imports the converter core
   static/             # index.html, styles.css, app.js
 ```
 
 Both front-ends (CLI and web) drive the same `probe` → `decisions` → `convert`
-core — it has no UI knowledge. `--prores` flows through the same `OutputFormat`
-abstraction.
+core for video — it has no UI knowledge. `--prores` flows through the same
+`OutputFormat` abstraction. HEIC->JPG is a separate, simpler path (`heic.py`)
+since it needs no codec/HDR decision-making.

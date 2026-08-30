@@ -3,24 +3,29 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MOV → MP4 Converter</title>
+  <title>Media Converter</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <main>
     <header>
-      <h1>MOV → MP4 Converter</h1>
-      <p class="sub">Drop iPhone <code>.mov</code> files below. HDR clips are tone-mapped to
-        SDR so they look right in your editor; already-compatible clips are remuxed losslessly.</p>
+      <h1>Media Converter</h1>
+      <p class="sub">Drop iPhone <code>.mov</code> or <code>.heic</code> files below. HDR clips
+        are tone-mapped to SDR so they look right in your editor; already-compatible clips are
+        remuxed losslessly. HEIC photos are converted straight to JPG.</p>
     </header>
 
-    <div id="dropzone" tabindex="0" role="button" aria-label="Add .mov files">
+    <div id="dropzone" tabindex="0" role="button" aria-label="Add .mov or .heic files">
       <div class="dz-inner">
         <div class="dz-icon">⤓</div>
-        <p><strong>Drop .mov files here</strong></p>
+        <p><strong>Drop .mov or .heic files here</strong></p>
         <p class="dz-hint">or click to browse</p>
       </div>
-      <input id="fileInput" type="file" accept=".mov,video/quicktime" multiple hidden />
+      <input
+        id="fileInput" type="file"
+        accept=".mov,video/quicktime,.heic,.heif,image/heic,image/heif"
+        multiple hidden
+      />
     </div>
 
     <div class="controls">
