@@ -6,6 +6,8 @@ Endpoints:
   POST /api/convert?name=&outdir=&hdr=  (raw file bytes as body)
                               -> writes a temp copy, probes it, starts a
                                  background conversion, returns a job id
+                                 (.mov -> .mp4 via ffmpeg, .heic/.heif -> .jpg
+                                 via sips)
   GET  /api/status?job=<id>   -> job progress/status as JSON
   GET  /api/download?job=<id> -> the converted file
 
@@ -29,10 +31,18 @@ from urllib.parse import parse_qs, urlparse
 from converter.convert import convert
 from converter.decisions import Options, plan_conversion
 from converter.ffmpeg import ensure_available
+from converter.heic import EXTENSIONS as HEIC_EXTENSIONS
+from converter.heic import convert_heic_to_jpg
 from converter.probe import probe
 
 STATIC_DIR = Path(__file__).parent / "static"
 _UPLOAD_CHUNK = 1 << 20  # 1 MiB
+_IMAGE_EXTS = set(HEIC_EXTENSIONS)
+_DOWNLOAD_CONTENT_TYPES = {
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".jpg": "image/jpeg",
+}
 
 
 @dataclass
@@ -83,7 +93,7 @@ def _unique_path(path: Path) -> Path:
         n += 1
 
 
-def _run_conversion(job: Job, src: Path, outdir: Path, options: Options) -> None:
+def _run_video_conversion(job: Job, src: Path, outdir: Path, options: Options) -> None:
     try:
         info = probe(src)
         plan = plan_conversion(info, options)
@@ -91,6 +101,20 @@ def _run_conversion(job: Job, src: Path, outdir: Path, options: Options) -> None
         out = _unique_path(outdir / (Path(job.name).stem + plan.output_format.extension))
         job.status = "converting"
         convert(info, plan, out, on_progress=lambda f: setattr(job, "progress", f))
+        job.output_path = str(out)
+        job.progress = 1.0
+        job.status = "done"
+    except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
+        job.error = str(exc)
+        job.status = "error"
+
+
+def _run_heic_conversion(job: Job, src: Path, outdir: Path) -> None:
+    try:
+        outdir.mkdir(parents=True, exist_ok=True)
+        out = _unique_path(outdir / (Path(job.name).stem + ".jpg"))
+        job.status = "converting"
+        convert_heic_to_jpg(src, out)
         job.output_path = str(out)
         job.progress = 1.0
         job.status = "done"
@@ -160,7 +184,8 @@ class Handler(BaseHTTPRequestHandler):
             if not job or not job.output_path:
                 return self._send_json({"error": "not ready"}, 404)
             out = Path(job.output_path)
-            return self._send_file(out, "video/mp4", download_name=out.name)
+            ctype = _DOWNLOAD_CONTENT_TYPES.get(out.suffix.lower(), "application/octet-stream")
+            return self._send_file(out, ctype, download_name=out.name)
 
         return self._send_json({"error": "not found"}, 404)
 
@@ -190,6 +215,14 @@ class Handler(BaseHTTPRequestHandler):
 
         job = JOBS.create(name)
 
+        if Path(name).suffix.lower() in _IMAGE_EXTS:
+            job.source_desc = "HEIC image"
+            job.action = "convert to JPG"
+            threading.Thread(
+                target=_run_heic_conversion, args=(job, src, outdir), daemon=True
+            ).start()
+            return self._send_json(asdict(job), 200)
+
         # Probe now so the UI can immediately show what will happen.
         try:
             info = probe(src)
@@ -207,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
         job.action = plan.summary
 
         threading.Thread(
-            target=_run_conversion, args=(job, src, outdir, options), daemon=True
+            target=_run_video_conversion, args=(job, src, outdir, options), daemon=True
         ).start()
 
         return self._send_json(asdict(job), 200)

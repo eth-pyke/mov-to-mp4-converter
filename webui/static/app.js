@@ -10,14 +10,17 @@ const rowTemplate = document.getElementById("rowTemplate");
 // Each queue entry: { file, li, nameEl, statusEl, fillEl, detailEl, done }
 const queue = [];
 
-function isMov(file) {
-  return file.name.toLowerCase().endsWith(".mov");
+const SUPPORTED_EXTS = [".mov", ".heic", ".heif"];
+
+function isSupported(file) {
+  const name = file.name.toLowerCase();
+  return SUPPORTED_EXTS.some((ext) => name.endsWith(ext));
 }
 
 function addFiles(files) {
   let added = 0;
   for (const file of files) {
-    if (!isMov(file)) continue;
+    if (!isSupported(file)) continue;
     // Skip obvious duplicates by name+size.
     if (queue.some((q) => q.file.name === file.name && q.file.size === file.size)) continue;
 

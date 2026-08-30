@@ -11,17 +11,26 @@ from typing import List
 
 from .convert import ToneMapUnsupported, build_command, convert
 from .decisions import Options, OutputFormat, plan_conversion
-from .ffmpeg import FFmpegNotFound, ensure_available, find_binary
+from .ffmpeg import FFmpegNotFound, ensure_available as ensure_ffmpeg, find_binary
+from .heic import EXTENSIONS as HEIC_EXTENSIONS
+from .heic import SipsNotFound, convert_heic_to_jpg
+from .heic import ensure_available as ensure_sips
 from .probe import probe
+
+_VIDEO_EXTS = {".mov"}
+_IMAGE_EXTS = set(HEIC_EXTENSIONS)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="convert.py",
         description="Convert iPhone .mov files to edit-ready .mp4 "
-        "(quality-preserving, HDR-aware).",
+        "(quality-preserving, HDR-aware), and .heic photos to .jpg.",
     )
-    p.add_argument("input", type=Path, help="A .mov file or a folder of .mov files")
+    p.add_argument(
+        "input", type=Path,
+        help="A .mov/.heic file, or a folder containing .mov and/or .heic files",
+    )
     p.add_argument(
         "-o", "--output", type=Path, default=None,
         help="Output file (single input) or output directory (folder input). "
@@ -52,6 +61,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="Show the plan and ffmpeg command for each file without running.",
     )
+    p.add_argument(
+        "--jpg-quality", type=int, default=90,
+        help="JPEG quality 0-100 for HEIC->JPG conversion (default 90).",
+    )
     return p
 
 
@@ -59,7 +72,7 @@ def _gather_inputs(inp: Path) -> List[Path]:
     if inp.is_dir():
         files = sorted(
             f for f in inp.iterdir()
-            if f.is_file() and f.suffix.lower() == ".mov"
+            if f.is_file() and f.suffix.lower() in _VIDEO_EXTS | _IMAGE_EXTS
         )
         return files
     if inp.is_file():
@@ -67,8 +80,7 @@ def _gather_inputs(inp: Path) -> List[Path]:
     raise FileNotFoundError(f"Input not found: {inp}")
 
 
-def _resolve_output(src: Path, args, options: Options, is_batch: bool) -> Path:
-    ext = options.output_format.extension
+def _resolve_output(src: Path, args, ext: str, is_batch: bool) -> Path:
     if args.output is None:
         return src.with_suffix(ext)
     if is_batch or args.output.is_dir():
@@ -98,7 +110,7 @@ def _process(src: Path, args, options: Options, is_batch: bool) -> bool:
         return False
 
     plan = plan_conversion(info, options)
-    output = _resolve_output(src, args, options, is_batch)
+    output = _resolve_output(src, args, options.output_format.extension, is_batch)
 
     if output.resolve() == src.resolve():
         print(f"  ! {src.name}: output would overwrite the source; skipping", file=sys.stderr)
@@ -142,6 +154,38 @@ def _process(src: Path, args, options: Options, is_batch: bool) -> bool:
     return True
 
 
+def _process_heic(src: Path, args, is_batch: bool) -> bool:
+    """Convert one HEIC/HEIF file to JPG. Return True on success (or dry-run)."""
+    output = _resolve_output(src, args, ".jpg", is_batch)
+
+    if output.resolve() == src.resolve():
+        print(f"  ! {src.name}: output would overwrite the source; skipping", file=sys.stderr)
+        return False
+
+    print(f"  {src.name}  [HEIC]  ->  convert to JPG (quality {args.jpg_quality})")
+
+    if args.dry_run:
+        print(
+            f'      $ sips -s format jpeg -s formatOptions {args.jpg_quality} '
+            f'"{src}" --out "{output}"'
+        )
+        return True
+
+    if output.exists() and not args.overwrite:
+        print(f"      skipping: {output.name} exists (use --overwrite)")
+        return False
+
+    try:
+        convert_heic_to_jpg(src, output, quality=args.jpg_quality)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! {src.name}: conversion failed ({exc})", file=sys.stderr)
+        return False
+
+    size_mb = output.stat().st_size / (1024 * 1024)
+    print(f"      done -> {output.name} ({size_mb:.1f} MB)")
+    return True
+
+
 def _quote(s: str) -> str:
     return f'"{s}"' if " " in s or "," in s else s
 
@@ -150,20 +194,27 @@ def main(argv=None) -> int:
     args = _build_parser().parse_args(argv)
 
     try:
-        ensure_available()
-    except FFmpegNotFound as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-
-    try:
         inputs = _gather_inputs(args.input)
     except FileNotFoundError as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
     if not inputs:
-        print(f"No .mov files found in {args.input}", file=sys.stderr)
+        print(f"No .mov/.heic files found in {args.input}", file=sys.stderr)
         return 1
+
+    if any(f.suffix.lower() in _VIDEO_EXTS for f in inputs):
+        try:
+            ensure_ffmpeg()
+        except FFmpegNotFound as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    if any(f.suffix.lower() in _IMAGE_EXTS for f in inputs):
+        try:
+            ensure_sips()
+        except SipsNotFound as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
 
     options = _options_from_args(args)
     is_batch = args.input.is_dir()
@@ -171,7 +222,15 @@ def main(argv=None) -> int:
     print(f"Converting {len(inputs)} file(s):")
     ok = 0
     for src in inputs:
-        if _process(src, args, options, is_batch):
+        suffix = src.suffix.lower()
+        if suffix in _VIDEO_EXTS:
+            success = _process(src, args, options, is_batch)
+        elif suffix in _IMAGE_EXTS:
+            success = _process_heic(src, args, is_batch)
+        else:
+            print(f"  ! {src.name}: unsupported file type", file=sys.stderr)
+            success = False
+        if success:
             ok += 1
 
     print(f"\nDone: {ok}/{len(inputs)} succeeded.")
